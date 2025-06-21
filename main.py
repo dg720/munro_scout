@@ -1,4 +1,5 @@
 from agent import parse_hike_preferences
+from router import route_based_on_preferences
 import sys
 
 if __name__ == "__main__":
@@ -11,6 +12,11 @@ if __name__ == "__main__":
         result = parse_hike_preferences.invoke({"user_prompt": user_prompt})
         print("\n[✅ Parsed Hike Preferences]")
         print(result.model_dump_json(indent=2))
+
+        print("\n[🤖 Routing Decision]")
+        routing_decision = route_based_on_preferences(result)
+        print(routing_decision)
+
     except Exception as e:
         print("\n[❌ Failed to extract hike preferences]")
         print(str(e))

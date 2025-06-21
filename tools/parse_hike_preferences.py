@@ -19,21 +19,38 @@ class HikePreferences(BaseModel):
     ]  # For semantic similarity e.g. "scenic", "quiet", "challenging"
 
 
-# Prompt template
 prompt_template = PromptTemplate.from_template("""
 Extract the following details from the user prompt:
-- Origin city
-- Max travel time in minutes
-- Named or implied train station(s)
-- Preferences like scenery, difficulty, solitude — label these as "soft_preferences"
 
-Return a JSON object with keys:
-origin_city, max_travel_time_minutes, station_keywords, soft_preferences
+- origin_city: The city the user wants to depart from (e.g. "Edinburgh", "Glasgow").
+- max_travel_time_minutes: The maximum travel time by train or bus, in minutes. If only hours are given, convert to minutes (e.g. "2 hours" → 120).
+- station_keywords: A list of **specific named train stations** only (e.g. "Corrour", "Bridge of Orchy"). 
+  ❌ Do not include generic phrases like "train station", "nearby station", or "stations".
+  ✅ Only include exact place names that correspond to real train stations.
 
-soft_preferences must be a list of strings
+- soft_preferences: A list of subjective or environmental hiking requirements mentioned in the prompt. These may include:
+
+  ◦ **Terrain** - "scrambling", "ridge walking", "flat", "well-marked","exposed"
+  ◦ **Scenery** - "scenic", "remote", "forest", "coastal", "lochside"
+  ◦ **Weather** - "suitable for poor weather", "sheltered", "winter-friendly"
+  ◦ **Suitability** - "dog-friendly", "child-friendly", "accessible by public transport", "quiet"
+  ◦ **Intensity** - "challenging", "relaxing", "beginner-friendly", "multi-day"
+
+Only include soft_preferences that are **explicitly or implicitly mentioned** in the prompt — do not default to generic terms unless the user clearly suggests them.
+
+Return only a **valid JSON object** with the following keys:
+- origin_city (string or null)
+- max_travel_time_minutes (integer or null)
+- station_keywords (list of strings)
+- soft_preferences (list of strings)
+
+Ensure:
+- All values are properly typed
+- JSON is strictly formatted and parsable
 
 User prompt: {user_prompt}
 """)
+
 
 llm = ChatOpenAI(
     model="gpt-3.5-turbo",
