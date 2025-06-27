@@ -1,6 +1,8 @@
 import json
 import time
 import os
+import requests
+from urllib.parse import urljoin
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
@@ -11,6 +13,9 @@ from webdriver_manager.chrome import ChromeDriverManager
 
 INPUT_FILE = "munro_list.json"
 OUTPUT_FILE = "munro_descriptions.json"
+GPX_DIR = "gpx_files"
+
+os.makedirs(GPX_DIR, exist_ok=True)
 
 
 def setup_driver():
@@ -56,13 +61,12 @@ def extract_description_from_route_page(driver, url):
         WebDriverWait(driver, 10).until(
             EC.presence_of_element_located((By.ID, "walk_desc"))
         )
-        # Extract main route description from stage paragraphs
         desc_paragraphs = driver.find_elements(By.CSS_SELECTOR, "#walk_desc .desc p")
         description = "\n\n".join(
             p.text.strip() for p in desc_paragraphs if p.text.strip()
         )
 
-        # Extract summary section from the h2 + p block
+        # Summary
         summary = ""
         try:
             summary_heading = driver.find_element(
@@ -75,10 +79,77 @@ def extract_description_from_route_page(driver, url):
         except Exception:
             pass
 
-        return summary, description
+        stats = {"distance": "", "time": "", "grade": "", "bog": ""}
+
+        # Extract distance and time from definition list under #col
+        try:
+            dl_items = driver.find_elements(By.CSS_SELECTOR, "#col dl dt")
+            for dt in dl_items:
+                label = dt.text.strip().lower()
+                try:
+                    dd = dt.find_element(
+                        By.XPATH, "following-sibling::dd[1]"
+                    ).text.strip()
+                except Exception:
+                    dd = ""
+                if "distance" in label:
+                    stats["distance"] = dd
+                elif "time" in label:
+                    stats["time"] = dd
+        except Exception:
+            pass
+
+        # Grade and bog factor from image counts
+        try:
+            grade_imgs = driver.find_elements(By.CSS_SELECTOR, ".grade img")
+            bog_imgs = driver.find_elements(By.CSS_SELECTOR, ".bog img")
+            stats["grade"] = str(len(grade_imgs))
+            stats["bog"] = str(len(bog_imgs))
+        except Exception:
+            pass
+
+        # GPX download link
+        gpx_path = ""
+        try:
+            # Navigate to intermediate download.php page
+            gpx_link = driver.find_element(
+                By.XPATH, "//a[contains(@href, 'download.php')]"
+            )
+            download_page_url = urljoin(
+                "https://www.walkhighlands.co.uk", gpx_link.get_attribute("href")
+            )
+
+            driver.get(download_page_url)
+            WebDriverWait(driver, 5).until(
+                EC.presence_of_element_located(
+                    (
+                        By.XPATH,
+                        "//a[contains(@href, '.gpx') and contains(text(), 'I STILL WANT TO DOWNLOAD')]",
+                    )
+                )
+            )
+            direct_gpx_link = driver.find_element(
+                By.XPATH,
+                "//a[contains(@href, '.gpx') and contains(text(), 'I STILL WANT TO DOWNLOAD')]",
+            )
+            gpx_url = direct_gpx_link.get_attribute("href")
+
+            safe_name = os.path.basename(gpx_url).replace(".gpx", "")
+            gpx_filename = os.path.join(GPX_DIR, f"{safe_name}.gpx")
+
+            if not os.path.exists(gpx_filename):
+                r = requests.get(gpx_url)
+                r.raise_for_status()
+                with open(gpx_filename, "wb") as f:
+                    f.write(r.content)
+            gpx_path = gpx_filename
+        except Exception as e:
+            print(f"⚠️ GPX file not found on page: {e}")
+
+        return summary, description, stats, gpx_path
     except Exception as e:
         print(f"⚠️ Failed to extract from {url}: {e}")
-        return "", ""
+        return "", "", {"distance": "", "time": "", "grade": "", "bog": ""}, ""
 
 
 def main():
@@ -107,17 +178,38 @@ def main():
             route_page_url = get_route_page_url(driver)
 
             if route_page_url:
-                summary, desc = extract_description_from_route_page(
+                summary, desc, stats, gpx_path = extract_description_from_route_page(
                     driver, route_page_url
                 )
             else:
                 print(f"⚠️ No route link found on {url}")
-                summary, desc = "", ""
+                summary, desc, stats, gpx_path = (
+                    "",
+                    "",
+                    {"distance": "", "time": "", "grade": "", "bog": ""},
+                    "",
+                )
         except Exception as e:
             print(f"⚠️ Error processing {url}: {e}")
-            summary, desc = "", ""
+            summary, desc, stats, gpx_path = (
+                "",
+                "",
+                {"distance": "", "time": "", "grade": "", "bog": ""},
+                "",
+            )
 
-        enriched.append({**munro, "summary": summary, "description": desc})
+        enriched.append(
+            {
+                **munro,
+                "summary": summary,
+                "description": desc,
+                "distance": stats["distance"],
+                "time": stats["time"],
+                "grade": stats["grade"],
+                "bog": stats["bog"],
+                "gpx_file": gpx_path,
+            }
+        )
         save_json(enriched, OUTPUT_FILE)
         time.sleep(6)
 
