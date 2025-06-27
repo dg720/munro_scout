@@ -56,11 +56,29 @@ def extract_description_from_route_page(driver, url):
         WebDriverWait(driver, 10).until(
             EC.presence_of_element_located((By.ID, "walk_desc"))
         )
+        # Extract main route description from stage paragraphs
         desc_paragraphs = driver.find_elements(By.CSS_SELECTOR, "#walk_desc .desc p")
-        return "\n\n".join(p.text.strip() for p in desc_paragraphs if p.text.strip())
+        description = "\n\n".join(
+            p.text.strip() for p in desc_paragraphs if p.text.strip()
+        )
+
+        # Extract summary section from the h2 + p block
+        summary = ""
+        try:
+            summary_heading = driver.find_element(
+                By.XPATH, "//h2[normalize-space(text())='Summary']"
+            )
+            summary_paragraph = summary_heading.find_element(
+                By.XPATH, "following-sibling::p[1]"
+            )
+            summary = summary_paragraph.text.strip()
+        except Exception:
+            pass
+
+        return summary, description
     except Exception as e:
         print(f"⚠️ Failed to extract from {url}: {e}")
-        return ""
+        return "", ""
 
 
 def main():
@@ -89,15 +107,17 @@ def main():
             route_page_url = get_route_page_url(driver)
 
             if route_page_url:
-                desc = extract_description_from_route_page(driver, route_page_url)
+                summary, desc = extract_description_from_route_page(
+                    driver, route_page_url
+                )
             else:
                 print(f"⚠️ No route link found on {url}")
-                desc = ""
+                summary, desc = "", ""
         except Exception as e:
             print(f"⚠️ Error processing {url}: {e}")
-            desc = ""
+            summary, desc = "", ""
 
-        enriched.append({**munro, "description": desc})
+        enriched.append({**munro, "summary": summary, "description": desc})
         save_json(enriched, OUTPUT_FILE)
         time.sleep(6)
 
