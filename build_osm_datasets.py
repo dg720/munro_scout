@@ -1,6 +1,7 @@
 import overpy
 import pandas as pd
 from geopy.distance import geodesic
+from rag_retriever import answer_hiking_query
 
 # Initialize Overpass API
 api = overpy.Overpass()
