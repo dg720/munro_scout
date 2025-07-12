@@ -2,7 +2,7 @@ import json
 from langchain.vectorstores import FAISS
 from langchain.embeddings import OpenAIEmbeddings
 from langchain.docstore.document import Document
-# from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 # Load dataset
 with open("munros.json") as f:
@@ -24,8 +24,8 @@ for m in munros:
     documents.append(Document(page_content=content, metadata=metadata))
 
 # Optional: split longer texts
-# splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-# split_docs = splitter.split_documents(documents)
+splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+split_docs = splitter.split_documents(documents)
 
 # Create and save FAISS vector store
 embeddings = OpenAIEmbeddings()  # or HuggingFaceEmbeddings(...)
