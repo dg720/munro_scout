@@ -13,40 +13,38 @@ load_dotenv()
 class HikePreferences(BaseModel):
     origin_city: Optional[str]
     max_travel_time_minutes: Optional[int]
+    max_time_hours: Optional[int]
+    max_distance_km: Optional[float]
+    grade: Optional[int]
+    bog_tolerance: Optional[int]
+    features: Optional[List[str]]
     station_keywords: Optional[List[str]]
-    soft_preferences: Optional[
-        List[str]
-    ]  # For semantic similarity e.g. "scenic", "quiet", "challenging"
+    soft_preferences: Optional[List[str]]
 
 
 prompt_template = PromptTemplate.from_template("""
-Extract the following details from the user prompt:
+Extract the following details from the user's hiking prompt:
 
-- origin_city: The city the user wants to depart from (e.g. "Edinburgh", "Glasgow").
-- max_travel_time_minutes: The maximum travel time by train or bus, in minutes. If only hours are given, convert to minutes (e.g. "2 hours" → 120).
-- station_keywords: A list of **specific named train stations** only (e.g. "Corrour", "Bridge of Orchy"). 
-  ❌ Do not include generic phrases like "train station", "nearby station", or "stations".
-  ✅ Only include exact place names that correspond to real train stations.
+- origin_city: The city they want to depart from (e.g. "Edinburgh", "Glasgow").
+- max_travel_time_minutes: Max travel time by public transport, in minutes. Convert hours if needed.
+- max_time_hours: Maximum desired hiking time (e.g. "under 5 hours").
+- max_distance_km: Maximum desired hiking distance in kilometers (e.g. "under 15km").
+- grade: Difficulty on a scale from 1 (easy) to 5 (very hard), if implied by terms like "steep", "technical", "challenging", etc.
+- bog_tolerance: 1 (low) to 5 (high) based on how tolerant they are of boggy/muddy conditions. Estimate from phrasing.
+- features: List any route characteristics explicitly mentioned like "ridge", "loop", "summit", "scrambling", "views", etc.
+- station_keywords: Specific named train stations (e.g. "Corrour", "Fort William"). Do NOT include generic terms like "station".
+- soft_preferences: Subjective or environmental hiking needs (e.g. "scenic", "dog-friendly", "quiet", "challenging").
 
-- soft_preferences: A list of subjective or environmental hiking requirements mentioned in the prompt. These may include:
-
-  ◦ **Terrain** - "scrambling", "ridge walking", "flat", "well-marked","exposed"
-  ◦ **Scenery** - "scenic", "remote", "forest", "coastal", "lochside"
-  ◦ **Weather** - "suitable for poor weather", "sheltered", "winter-friendly"
-  ◦ **Suitability** - "dog-friendly", "child-friendly", "accessible by public transport", "quiet"
-  ◦ **Intensity** - "challenging", "relaxing", "beginner-friendly", "multi-day"
-
-Only include soft_preferences that are **explicitly or implicitly mentioned** in the prompt — do not default to generic terms unless the user clearly suggests them.
-
-Return only a **valid JSON object** with the following keys:
+Return a valid JSON object with keys:
 - origin_city (string or null)
-- max_travel_time_minutes (integer or null)
+- max_travel_time_minutes (int or null)
+- max_time_hours (int or null)
+- max_distance_km (float or null)
+- grade (int or null)
+- bog_tolerance (int or null)
+- features (list of strings or null)
 - station_keywords (list of strings)
 - soft_preferences (list of strings)
-
-Ensure:
-- All values are properly typed
-- JSON is strictly formatted and parsable
 
 User prompt: {user_prompt}
 """)
@@ -58,7 +56,6 @@ llm = ChatOpenAI(
     openai_api_key=os.getenv("OPENAI_API_KEY"),
 )
 
-# Replace deprecated LLMChain with new RunnableSequence
 chain = prompt_template | llm
 
 
@@ -68,7 +65,7 @@ def parse_hike_preferences(user_prompt: str) -> HikePreferences:
     Parses a user's natural language hiking query to extract structured hike preferences.
     """
     response = chain.invoke({"user_prompt": user_prompt})
-    content = response.content  # Extract JSON string from AIMessage
+    content = response.content
 
     try:
         parsed = HikePreferences.parse_raw(content)

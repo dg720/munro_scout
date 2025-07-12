@@ -5,6 +5,21 @@ from rag_retriever import answer_hiking_query
 from filter_llm_sources import extract_top_munros_from_answer
 import sys
 import json
+import unicodedata
+import difflib
+
+
+def normalize_name(name: str) -> str:
+    return (
+        unicodedata.normalize("NFKD", name)
+        .encode("ascii", "ignore")
+        .decode("utf-8")
+        .lower()
+        .replace("’", "'")
+        .lstrip("-• ")
+        .strip()
+    )
+
 
 # Load all Munros into memory for enrichment
 with open("munro_descriptions.json") as f:
@@ -13,24 +28,41 @@ with open("munro_descriptions.json") as f:
 
 def enrich_munro_metadata(selected: list, all_munros: list) -> list:
     """
-    Given a list of top Munros (with just names), match them to the full database and enrich with metadata.
+    Match selected Munro names to full metadata using normalization + fuzzy fallback.
     """
-    name_map = {m["name"].lower(): m for m in all_munros}
+    # Normalized map of full dataset
+    name_map = {normalize_name(m["name"]): m for m in all_munros}
+    normalized_keys = list(name_map.keys())
+
     enriched = []
 
     for m in selected:
-        match = name_map.get(m["name"].lower())
-        if match:
-            enriched.append(
-                {
-                    "name": match["name"],
-                    "distance_km": m.get("distance_km", 0.0),
-                    "terrain": match.get("terrain", "N/A"),
-                    "public_transport": match.get("public_transport", "N/A"),
-                    "gpx_file": match.get("gpx_file", "N/A"),
-                    "raw": match["name"],
-                }
+        input_name = m["name"]
+        norm_input = normalize_name(input_name)
+        match = name_map.get(norm_input)
+
+        if not match:
+            # Fuzzy fallback (compare normalized names)
+            close_matches = difflib.get_close_matches(
+                norm_input, normalized_keys, n=1, cutoff=0.8
             )
+            if close_matches:
+                match = name_map[close_matches[0]]
+                print(f"[🔁 Fuzzy matched] '{input_name}' → '{match['name']}'")
+            else:
+                print(f"[⚠️ No match found for] '{input_name}' → '{norm_input}'")
+                continue  # skip unmatched entry
+
+        enriched.append(
+            {
+                "name": match["name"],
+                "distance_km": m.get("distance_km", 0.0),
+                "terrain": match.get("terrain", "N/A"),
+                "public_transport": match.get("public_transport", "N/A"),
+                "gpx_file": match.get("gpx_file", "N/A"),
+                "raw": match["name"],
+            }
+        )
 
     return enriched
 
@@ -68,13 +100,23 @@ if __name__ == "__main__":
 
         elif action == "munros_reranked_by_preferences":
             print("\n[📊 Reranked Munros Based on Your Preferences]")
+            enriched_results = []
+
             for station in results:
                 print(f"\n🚉 {station['station_name']}")
                 for m in station["top_munros"]:
-                    print(f"  - {m['raw']}")
+                    print(f"  {m['raw']}")
+
+                # Enrich metadata before summary
+                enriched = enrich_munro_metadata(station["top_munros"], all_munros)
+                enriched_results.append(
+                    {"station_name": station["station_name"], "top_munros": enriched}
+                )
 
             print("\n[📝 Generating Summary]")
-            summary = generate_munro_summary.invoke({"recommendations": results})
+            summary = generate_munro_summary.invoke(
+                {"recommendations": enriched_results}
+            )
             print("\n[📖 Suggested Routes Summary]")
             print(summary)
 
@@ -103,6 +145,8 @@ if __name__ == "__main__":
                 sources=response["sources"],
                 top_k=3,
             )
+
+            print(top_munros)
 
             # Step 2: Enrich with full metadata
             enriched_munros = enrich_munro_metadata(top_munros, all_munros)

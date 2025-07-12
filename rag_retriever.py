@@ -1,10 +1,13 @@
 import os
 import re
+import unicodedata
 from typing import List, Dict
 from langchain.chains import RetrievalQA
 from langchain.chat_models import ChatOpenAI
 from munro_rag.retriever import get_retriever
 from tools.parse_hike_preferences import HikePreferences
+
+llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0)
 
 
 def answer_hiking_query(query: str) -> dict:
@@ -35,58 +38,89 @@ def answer_hiking_query(query: str) -> dict:
     }
 
 
-def rank_munros_by_preferences(
-    preferences: HikePreferences, munros: List[Dict]
-) -> List[Dict]:
+def rank_munros_by_preferences(preferences: HikePreferences, munros: list) -> list:
     """
-    Uses RAG to semantically rank a list of Munro dictionaries against the user preferences.
-    Returns a sorted list of top Munros by preference relevance.
+    Uses the LLM to semantically rank a provided list of Munros based on the user's preferences.
     """
     if not munros:
         return []
 
+    # Clean any leading symbols from names at the source
+    for m in munros:
+        m["name"] = m["name"].lstrip("-• ").strip()
+
     munro_names = [m["name"] for m in munros]
-    prompt = f"""
-You are a mountain guide. The user has asked for Munro recommendations based on these preferences:
 
-- Max time: {preferences.max_time_hours or "any"} hours
-- Max distance: {preferences.max_distance_km or "any"} km
-- Max grade: {preferences.grade or "any"}
-- Bog tolerance: {preferences.bog_tolerance or "any"}
-- Desired features: {preferences.features or "unspecified"}
+    preference_block = f"""
+The user is looking for a Munro hike with the following preferences:
 
-Please review the following list of Munros and return a list of up to 5 that best match these preferences, ordered from best to worst:
-
-{", ".join(munro_names)}
-
-Return the list using one Munro per line.
+🕒 Max time: {preferences.max_time_hours or "any"} hours  
+📏 Max distance: {preferences.max_distance_km or "any"} km  
+🎯 Grade (difficulty 1–5): {preferences.grade or "any"}  
+💧 Bog tolerance (1 = hates bog, 5 = doesn't mind): {preferences.bog_tolerance or "any"}  
+🔍 Features of interest: {", ".join(preferences.features or []) or "none specified"}  
+✨ Other preferences (subjective): {", ".join(preferences.soft_preferences or []) or "none specified"}
 """
 
-    rag_result = answer_hiking_query(prompt)
-    ranked_names = extract_ranked_names(rag_result["answer"], munros)
+    munro_list = "\n".join([f"- {name}" for name in munro_names])
 
-    # Reorder based on LLM ranking
-    return [
-        m for name in ranked_names for m in munros if m["name"].lower() == name.lower()
+    prompt = f"""
+You are a Scottish hiking guide.
+
+{preference_block}
+
+Below is a list of Munros near a specific train station:
+
+{munro_list}
+
+Please carefully consider the user's preferences and rank the top 3–5 Munros from this list that best match them.
+
+🚫 Do NOT suggest any Munros that are not in the list.  
+✅ Only use the options provided.
+
+Return only the Munro names, one per line.
+"""
+
+    result = llm.invoke(prompt).content
+    ranked_names = [
+        line.strip("-• ").strip()
+        for line in result.strip().splitlines()
+        if line.strip()
     ]
 
+    print("\n[🔎 LLM Ranked Names]")
+    print(ranked_names)
 
-def extract_ranked_names(raw_answer: str, munros: List[Dict]) -> List[str]:
-    """
-    Extracts a ranked list of Munro names from the LLM's raw answer text.
-    Uses fuzzy matching to match them against the known Munro list.
-    """
-    # Lowercase name set for fuzzy matching
-    known_names = {m["name"].lower(): m["name"] for m in munros}
-    matched = []
+    print("\n[📋 Candidate Munros]")
+    for m in munros:
+        print(f"  - {m['name']}")
 
-    lines = raw_answer.splitlines()
-    for line in lines:
-        # Remove bullet or number
-        clean = re.sub(r"^[\-\d\.\)\s]+", "", line).strip().lower()
-        for key in known_names:
-            if key in clean and known_names[key] not in matched:
-                matched.append(known_names[key])
+    return match_ranked_munros(ranked_names, munros)
+
+
+def normalize_name(name: str) -> str:
+    """
+    Normalize a string to ASCII, lowercase, and remove apostrophes and accents.
+    """
+    return (
+        unicodedata.normalize("NFKD", name)
+        .encode("ascii", "ignore")
+        .decode("utf-8")
+        .lower()
+        .replace("’", "'")
+        .strip()
+    )
+
+
+def match_ranked_munros(ranked_names: list, munros: list) -> list:
+    """
+    Match LLM-ranked names back to full munro objects with robust matching.
+    """
+    matches = []
+    for ranked in ranked_names:
+        norm_ranked = normalize_name(ranked)
+        for m in munros:
+            if normalize_name(m["name"]) == norm_ranked:
+                matches.append(m)
                 break
-
-    return matched
+    return matches
